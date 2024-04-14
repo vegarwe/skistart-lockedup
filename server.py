@@ -31,12 +31,15 @@ class SkiManager:
 
     @property
     def status(self):
-        return json.dumps([
+        return json.dumps({
+            'type': 'status',
+            'rack': [
                 {
                     "status": 'occupied' if i.card_uid else 'available',
                     "card_uid": str(i.card_uid)
                 }
-                for i in self._ports])
+                for i in self._ports]
+            })
 
     def _send_status_change(self):
         async def _send_status_async():
@@ -45,25 +48,39 @@ class SkiManager:
 
         asyncio.get_event_loop().run_until_complete(_send_status_async())
 
+    def _send_log(self, entry):
+        async def _send_log_async():
+            for ws_client in WSHandler.participants:
+                ws_client.write_message(json.dumps({ 'type': 'log', 'entry': entry}))
+
+        print(entry)
+        asyncio.get_event_loop().run_until_complete(_send_log_async())
+
+    def unlock(self, idx):
+        print('unlock', idx)
+        self._ports[idx].card_uid = None
+
+        self._send_status_change()
+
     def handle_card(self, target):
         # Release port
         for port in self._ports:
             if  port.card_uid == target.uid:
                 port.card_uid = None
-                print('release port', target.uid, port)
                 self._send_status_change()
+                self._send_log('release port %s %s' % (target.uid, port))
                 return
 
         # Assign port
         for port in self._ports:
             if  port.card_uid is None:
                 port.card_uid = target.uid
-                print('assign port ', target.uid, port)
                 self._send_status_change()
+                self._send_log('assign port %s %s' % (target.uid, port))
                 break
         else:
             # Rack is full
-            print('rack is full', target.uid)
+            self._send_log('rack is full %s' % (target.uid))
 
     def run_rfid(self):
         self._keep_running = True
@@ -150,9 +167,15 @@ class MainHandler(tornado.web.RequestHandler):
         if not self.skimanager:
             return self.send_error(412)
 
-        if path == 'api/cmd':
+        if   path == 'api/cmd':
             cmd = json.loads(self.request.body.decode('utf-8'))
             print('cmd ', cmd, self.skimanager)
+            self.set_status(200)
+            self.write(self.skimanager.status)
+        elif path == 'api/unlock':
+            port = json.loads(self.request.body.decode('utf-8'))
+            self.skimanager.unlock(port['number'])
+
             self.set_status(200)
             self.write(self.skimanager.status)
         else:
@@ -180,6 +203,7 @@ class MainHandler(tornado.web.RequestHandler):
             self.send_error(404)
 
     def post(self, path):
+        print("post", path)
         if path in ['login', 'login.html']:
             auth_data = self.get_body_argument("password", default=None, strip=False)
             print('todo', auth_data) # TODO

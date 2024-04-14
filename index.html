@@ -7,24 +7,67 @@
     <!--link rel="stylesheet" href="static/bootstrap.min.css"-->
     <style>
     </style>
-    <!--script src="static/angular.min.1.7.5.js"></script-->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
 </head>
 <body>
 
 <div class="container">
+    <p>Admin oversikt:</p>
+    <div id="rack">
+        <p>Waiting</p>
+    </div>
+
+    <p>Log</p>
+    <ul id="log">
+    </ul>
 </div> <!-- end container -->
 
 </body>
 
 <script type="text/javascript">
-    console.log("hei 001");
+    function unlock(idx) {
+        console.log("unlock " + idx);
+        fetch("api/unlock", {
+            method: "PUT",
+            body: JSON.stringify({ number: idx }),
+            headers: { "Content-type": "application/json; charset=UTF-8" }
+        }).then((response) => console.log(response));
+    }
 
-    var connect = function() {
+    function handle_status(rack) {
+        var html_data = "<table><tr><th>Nummer</th><th>status</th></tr>";
+        for (var i = 0; i < rack.length; i++) {
+            html_data += "<tr><td>" + i + "</td><td>" + rack[i].status + "</td>";
+            if (rack[i].status !== "available") {
+                html_data += "<td><button onclick='unlock(" + i + ")'>unlock</button></td></tr>";
+            } else {
+                html_data += "<td>&nbsp;</td></tr>";
+            }
+        }
+        html_data += "</table>";
+
+        $("#rack").html(html_data);
+    }
+
+    function handle_log(entry) {
+        var html_data = "<li>" + entry + "</li>";
+
+        console.log('handle_log: ' + html_data);
+        $("#log").append(html_data);
+    }
+
+    function connect() {
         var ws = new WebSocket(get_ws_addr());
 
         ws.onmessage = function(evt) {
-            console.log("onmessage");
             console.log(evt);
+            data = JSON.parse(evt.data);
+
+            if (data.type === "status") {
+                handle_status(data.rack)
+            } else if (data.type == "log") {
+                handle_log(data.entry)
+            }
         };
 
         ws.onclose = function(evt) {
@@ -55,13 +98,7 @@
         return ws_addr;
     }
 
-    var ws = connect();
-    console.log("hei 002");
-</script>
-
-<script type="text/javascript">
-    /*
-    */
+    connect();
 </script>
 
 </html>
