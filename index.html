@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SkiRack</title>
+    <meta charset="utf-8">
+    <link rel="shortcut icon" href="static/favicon.ico">
+    <!--link rel="stylesheet" href="static/bootstrap.min.css"-->
+    <style>
+    </style>
+    <!--script src="static/angular.min.1.7.5.js"></script-->
+</head>
+<body>
+
+<div class="container">
+</div> <!-- end container -->
+
+</body>
+
+<script type="text/javascript">
+    console.log("hei 001");
+
+    var connect = function() {
+        var ws = new WebSocket(get_ws_addr());
+
+        ws.onmessage = function(evt) {
+            console.log("onmessage");
+            console.log(evt);
+        };
+
+        ws.onclose = function(evt) {
+            console.log("onclose");
+            console.log(evt);
+        };
+
+        ws.onopen = function(evt) {
+            console.log("onopen");
+            console.log(evt);
+        };
+
+        return ws;
+    }
+
+    function get_ws_addr() {
+        var ws_addr = "ws://";
+        if (window.location.protocol === "https:") {
+            ws_addr = "wss://";
+        }
+
+        ws_addr += window.location.host;
+
+        pathSplit = window.location.pathname.split('/');
+        pathSplit[pathSplit.length-1] = 'ws';
+        ws_addr += pathSplit.join('/');
+
+        return ws_addr;
+    }
+
+    var ws = connect();
+    console.log("hei 002");
+</script>
+
+<script type="text/javascript">
+    /*
+    */
+</script>
+
+</html>
