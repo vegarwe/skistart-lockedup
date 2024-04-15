@@ -15,6 +15,7 @@ from pynfc import Nfc, Desfire, TimeoutException, nfc
 
 INPUT_PIN_0 = 18
 INPUT_PIN_1 = 24
+OUTPUT_PIN_0 = 6
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 
 class SkiPort:
@@ -80,6 +81,7 @@ class SkiManager:
                 port.door_status = 'open' if port.door_state else 'unlocked'
                 self._send_status_change()
                 self._send_log('release port %s %s' % (target.uid, port))
+                GPIO.output(OUTPUT_PIN_0, 0)
                 return
 
         # Assign port
@@ -89,6 +91,7 @@ class SkiManager:
                 port.door_status = 'open' if port.door_state else 'locked'
                 self._send_status_change()
                 self._send_log('assign  port %s %s' % (target.uid, port))
+                GPIO.output(OUTPUT_PIN_0, 1)
                 break
         else:
             # Rack is full
@@ -137,6 +140,8 @@ class SkiManager:
 
     def run_pin_state(self):
         GPIO.setmode(GPIO.BCM)
+        GPIO.setup(OUTPUT_PIN_0, GPIO.OUT)
+
         for pin in self._input_pins:
             GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
@@ -268,7 +273,7 @@ def main():
 
     application = tornado.web.Application([
         (r'/ws', WSHandler),
-        (r"/static/(.*)", tornado.web.StaticFileHandler, dict(path=SCRIPT_PATH)),
+        (r"/static/(.*)", tornado.web.StaticFileHandler, dict(path=os.path.join(SCRIPT_PATH, 'static'))),
         (r'/(.*)', MainHandler),
     ], cookie_secret="d0870884-495c-4758-8c86-24383dc0ee69")
 
