@@ -37,7 +37,7 @@
     function handle_status(rack) {
         var html_data = "<table><tr><th>Nummer</th><th>status</th><th>door state</th><th>admin</th></tr>";
         for (var i = 0; i < rack.length; i++) {
-            html_data += "<tr><td>" + i + "</td><td>" + rack[i].status + "</td><td>" + rack[i].door_state + "</td>";
+            html_data += "<tr><td>" + i + "</td><td>" + rack[i].status + "</td><td>" + rack[i].door_status + "</td>";
             if (rack[i].status !== "available") {
                 html_data += "<td><button onclick='unlock(" + i + ")'>unlock</button></td></tr>";
             } else {
@@ -56,6 +56,7 @@
         $("#log").append(html_data);
     }
 
+    var connected = false;
     function connect() {
         var ws = new WebSocket(get_ws_addr());
 
@@ -73,12 +74,28 @@
         ws.onclose = function(evt) {
             console.log("onclose");
             console.log(evt);
+            connected = false;
+            ws.close();
+        };
+
+        ws.onerror = function() {
+            console.log("onerror");
+            connected = false;
+            ws.close();
         };
 
         ws.onopen = function(evt) {
             console.log("onopen");
             console.log(evt);
+            connected = true;
         };
+
+        var intervalId = setInterval(function() {
+            if (! connected) {
+                console.log("trying to reconnect " + connected);
+                //connect();
+            }
+        }, 5000);
 
         return ws;
     }

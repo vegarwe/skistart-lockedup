@@ -14,20 +14,25 @@ import RPi.GPIO as GPIO
 from pynfc import Nfc, Desfire, TimeoutException, nfc
 
 INPUT_PIN_0 = 18
+INPUT_PIN_1 = 24
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 
 class SkiPort:
     def __init__(self, number):
         self.number = number
         self.card_uid = None
-        self.door_state = 'open'
+        self.door_state = 1
+        self.door_status = 'open'
 
     def __str__(self):
         return f'{self.number} - {self.card_uid}'
 
 class SkiManager:
     def __init__(self, count):
+        if count > 2:
+            raise Exception("Do not support more than two ports (yet)")
         self._ports = [SkiPort(i) for i in range(count)]
+        self._input_pins = [INPUT_PIN_0, INPUT_PIN_1][:count]
         self._keep_running = False
         self._rfid_thread = None
         self._pin_thread = None
@@ -40,6 +45,7 @@ class SkiManager:
                 {
                     "status":       'occupied' if i.card_uid else 'available',
                     "door_state":   i.door_state,
+                    "door_status":  i.door_status,
                     "card_uid":     str(i.card_uid)
                 }
                 for i in self._ports]
@@ -71,6 +77,7 @@ class SkiManager:
         for port in self._ports:
             if  port.card_uid == target.uid:
                 port.card_uid = None
+                port.door_status = 'open' if port.door_state else 'unlocked'
                 self._send_status_change()
                 self._send_log('release port %s %s' % (target.uid, port))
                 return
@@ -79,8 +86,9 @@ class SkiManager:
         for port in self._ports:
             if  port.card_uid is None:
                 port.card_uid = target.uid
+                port.door_status = 'open' if port.door_state else 'locked'
                 self._send_status_change()
-                self._send_log('assign port %s %s' % (target.uid, port))
+                self._send_log('assign  port %s %s' % (target.uid, port))
                 break
         else:
             # Rack is full
@@ -114,24 +122,39 @@ class SkiManager:
         except KeyboardInterrupt:
             pass
 
+    def set_door_state(self, idx, input_state):
+        self._ports[idx].door_state = input_state
+        if  self._ports[idx].card_uid is None:
+            self._ports[idx].door_status = 'open'   if input_state else 'closed'
+        else:
+            self._ports[idx].door_status = 'forced' if input_state else 'locked'
+            #if  self._ports[idx].door_status == 'open' and input_state:
+            #    self._ports[idx].door_status = 'open - available'
+            #else:
+            #    self._ports[idx].door_status = 'forced' if input_state else 'locked'
+        self._send_status_change()
+        self._send_log('door state changed %s' % (self._ports[idx].door_status))
+
     def run_pin_state(self):
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(INPUT_PIN_0, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        for pin in self._input_pins:
+            GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-        prev_input_0 = None
+        prev_input = [1    for _ in self._input_pins]
+        curr_input = [None for _ in self._input_pins]
         while self._keep_running:
             time.sleep(0.2)
-            input_0 = GPIO.input(INPUT_PIN_0)
+            for idx, pin in enumerate(self._input_pins):
+                curr_input[idx] = GPIO.input(pin)
 
-            if prev_input_0 != input_0:
-                print('state_change', input_0)
-                if  self._ports[0].card_uid is None:
-                    self._ports[0].door_state = 'open'   if input_0 else 'closed'
-                else:
-                    self._ports[0].door_state = 'forced' if input_0 else 'locked'
-                self._send_status_change()
-                self._send_log('door state changed %s' % (self._ports[0].door_state))
-            prev_input_0 = input_0
+                if prev_input[idx] != curr_input[idx]:
+                    self.set_door_state(idx, curr_input[idx])
+                prev_input[idx] = curr_input[idx]
+
+        GPIO.cleanup()
+
+        # GPIO.add_event_detect(10,GPIO.RISING,callback=button_callback) # Setup event on pin 10 rising edge
+        # GPIO.wait_for_edge(channel, GPIO.RISING)
 
     def start(self):
         self._keep_running = True
@@ -165,6 +188,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         print('connection opened')
         self.participants.add(self)
         self.write_message(self.skimanager.status)
+        self.write_message(json.dumps({ 'type': 'log', 'entry': 'connected'}))
 
     def on_message(self, message):
         pass
