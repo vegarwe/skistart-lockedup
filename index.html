@@ -35,9 +35,9 @@
     }
 
     function handle_status(rack) {
-        var html_data = "<table><tr><th>Nummer</th><th>status</th></tr>";
+        var html_data = "<table><tr><th>Nummer</th><th>status</th><th>door state</th><th>admin</th></tr>";
         for (var i = 0; i < rack.length; i++) {
-            html_data += "<tr><td>" + i + "</td><td>" + rack[i].status + "</td>";
+            html_data += "<tr><td>" + i + "</td><td>" + rack[i].status + "</td><td>" + rack[i].door_state + "</td>";
             if (rack[i].status !== "available") {
                 html_data += "<td><button onclick='unlock(" + i + ")'>unlock</button></td></tr>";
             } else {

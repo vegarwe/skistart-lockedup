@@ -3,22 +3,24 @@ import json
 import nest_asyncio
 import os
 import time
-#import tornado.ioloop
+import threading
 import tornado.httpserver
 import tornado.web
 import tornado.websocket
 import tornado.platform.asyncio
 
-import threading
+import RPi.GPIO as GPIO
 
 from pynfc import Nfc, Desfire, TimeoutException, nfc
 
+INPUT_PIN_0 = 18
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 
 class SkiPort:
     def __init__(self, number):
         self.number = number
         self.card_uid = None
+        self.door_state = 'open'
 
     def __str__(self):
         return f'{self.number} - {self.card_uid}'
@@ -26,8 +28,9 @@ class SkiPort:
 class SkiManager:
     def __init__(self, count):
         self._ports = [SkiPort(i) for i in range(count)]
-        self._thread = None
         self._keep_running = False
+        self._rfid_thread = None
+        self._pin_thread = None
 
     @property
     def status(self):
@@ -35,8 +38,9 @@ class SkiManager:
             'type': 'status',
             'rack': [
                 {
-                    "status": 'occupied' if i.card_uid else 'available',
-                    "card_uid": str(i.card_uid)
+                    "status":       'occupied' if i.card_uid else 'available',
+                    "door_state":   i.door_state,
+                    "card_uid":     str(i.card_uid)
                 }
                 for i in self._ports]
             })
@@ -83,8 +87,6 @@ class SkiManager:
             self._send_log('rack is full %s' % (target.uid))
 
     def run_rfid(self):
-        self._keep_running = True
-
         n = Nfc("pn532_uart:/dev/ttyUSB0:115200")
 
         try:
@@ -98,7 +100,7 @@ class SkiManager:
                     last_uid = None
                     #print('waiting for card')
                 if last_uid == target.uid:
-                    last_timeout = time.time() + 1.5
+                    last_timeout = time.time() + 0.5
                     time.sleep(.1)
                     continue
 
@@ -112,16 +114,41 @@ class SkiManager:
         except KeyboardInterrupt:
             pass
 
+    def run_pin_state(self):
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(INPUT_PIN_0, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+        prev_input_0 = None
+        while self._keep_running:
+            time.sleep(0.2)
+            input_0 = GPIO.input(INPUT_PIN_0)
+
+            if prev_input_0 != input_0:
+                print('state_change', input_0)
+                if  self._ports[0].card_uid is None:
+                    self._ports[0].door_state = 'open'   if input_0 else 'closed'
+                else:
+                    self._ports[0].door_state = 'forced' if input_0 else 'locked'
+                self._send_status_change()
+                self._send_log('door state changed %s' % (self._ports[0].door_state))
+            prev_input_0 = input_0
+
     def start(self):
-        self._thread = threading.Thread(target=self.run_rfid)
-        self._thread.start()
+        self._keep_running = True
+
+        self._rfid_thread = threading.Thread(target=self.run_rfid)
+        self._rfid_thread.start()
+
+        self._pin_thread = threading.Thread(target=self.run_pin_state)
+        self._pin_thread.start()
 
     def stop(self):
         self._keep_running = False
-        if self._thread:
+        if self._rfid_thread:
             pass # TODO!!!
-            #self._thread.join()
-        self._thread = None
+            #self._rfid_thread.join()
+        self._rfid_thread = None
+        self._pin_thread = None
 
     def __del__(self):
         self.stop()
@@ -186,10 +213,6 @@ class MainHandler(tornado.web.RequestHandler):
             self.set_status(200)
             self.set_header("Content-type", "text/html")
             self.write(open(os.path.join(SCRIPT_PATH, 'index.html')).read())
-        #elif path in ['sw.js']:
-        #    self.set_status(200)
-        #    self.set_header("Content-type", "text/javascript")
-        #    self.write(open(os.path.join(SCRIPT_PATH, path)).read())
         #elif path in ['login', 'login.html']:
         #    if not self.__check_auth():
         #        self.set_status(200)
@@ -203,7 +226,6 @@ class MainHandler(tornado.web.RequestHandler):
             self.send_error(404)
 
     def post(self, path):
-        print("post", path)
         if path in ['login', 'login.html']:
             auth_data = self.get_body_argument("password", default=None, strip=False)
             print('todo', auth_data) # TODO
@@ -249,8 +271,10 @@ def main():
     except KeyboardInterrupt:
         pass
 
-    print("Stopping")
+    print("Stopping loop")
     loop.stop()
+    print("Stopping skimanager")
+    skimanager.stop()
 
 if __name__ == "__main__":
     main()
