@@ -16,17 +16,18 @@ from pynfc import Nfc, Desfire, TimeoutException, nfc
 INPUT_PIN_0 = 18
 INPUT_PIN_1 = 24
 OUTPUT_PIN_0 = 6
+OUTPUT_PIN_1 = 13
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
 
 class SkiPort:
-    def __init__(self, number):
+    def __init__(self, number, card_uid=None, door_state=1, door_status='open'):
         self.number = number
         self.card_uid = None
-        self.door_state = 1
-        self.door_status = 'open'
+        self.door_state = door_state
+        self.door_status = door_status
 
     def __str__(self):
-        return f'{self.number} - {self.card_uid}'
+        return f'{self.__class__.__name__}({self.number}, {self.card_uid}, {self.door_state}, {self.door_status})'
 
 class SkiManager:
     def __init__(self, count):
@@ -34,6 +35,7 @@ class SkiManager:
             raise Exception("Do not support more than two ports (yet)")
         self._ports = [SkiPort(i) for i in range(count)]
         self._input_pins = [INPUT_PIN_0, INPUT_PIN_1][:count]
+        self._relay_pins = [OUTPUT_PIN_0, OUTPUT_PIN_1][:count]
         self._keep_running = False
         self._rfid_thread = None
         self._pin_thread = None
@@ -68,30 +70,33 @@ class SkiManager:
         asyncio.get_event_loop().run_until_complete(_send_log_async())
 
     def unlock(self, idx):
-        print('unlock', idx)
-        self._ports[idx].card_uid = None
+        self._send_log('admin unlock %s' % (idx))
+        self.change_door_status(None, self._ports[idx])
 
+    def change_door_status(self, card_uid, port):
+        if card_uid is None:
+            self._send_log('release    port %s card_uid %s (%s)' % (port.number, port.card_uid, port))
+            port.door_status = 'open' if port.door_state else 'unlocked'
+            GPIO.output(self._relay_pins[port.number], 0)
+        else:
+            self._send_log('assign     port %s card_uid %s (%s)' % (port.number, card_uid, port))
+            port.door_status = 'open' if port.door_state else 'locked'
+            GPIO.output(self._relay_pins[port.number], 1)
+
+        port.card_uid = card_uid
         self._send_status_change()
 
     def handle_card(self, target):
         # Release port
         for port in self._ports:
             if  port.card_uid == target.uid:
-                port.card_uid = None
-                port.door_status = 'open' if port.door_state else 'unlocked'
-                self._send_status_change()
-                self._send_log('release port %s %s' % (target.uid, port))
-                GPIO.output(OUTPUT_PIN_0, 0)
+                self.change_door_status(None, port)
                 return
 
         # Assign port
         for port in self._ports:
             if  port.card_uid is None:
-                port.card_uid = target.uid
-                port.door_status = 'open' if port.door_state else 'locked'
-                self._send_status_change()
-                self._send_log('assign  port %s %s' % (target.uid, port))
-                GPIO.output(OUTPUT_PIN_0, 1)
+                self.change_door_status(target.uid, port)
                 break
         else:
             # Rack is full
@@ -131,16 +136,14 @@ class SkiManager:
             self._ports[idx].door_status = 'open'   if input_state else 'closed'
         else:
             self._ports[idx].door_status = 'forced' if input_state else 'locked'
-            #if  self._ports[idx].door_status == 'open' and input_state:
-            #    self._ports[idx].door_status = 'open - available'
-            #else:
-            #    self._ports[idx].door_status = 'forced' if input_state else 'locked'
         self._send_status_change()
-        self._send_log('door state changed %s' % (self._ports[idx].door_status))
+        self._send_log('door state port %s %s' % (idx, self._ports[idx].door_status))
 
     def run_pin_state(self):
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(OUTPUT_PIN_0, GPIO.OUT)
+
+        for pin in self._relay_pins:
+            GPIO.setup(pin, GPIO.OUT)
 
         for pin in self._input_pins:
             GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
